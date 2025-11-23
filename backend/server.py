@@ -1580,24 +1580,23 @@ async def create_order(order: OrderBase, current_user: dict = Depends(require_ro
     order_dict['created_by'] = current_user['id']
     order_dict['is_locked'] = False
     
-    # Handle recurring orders
-    if order.is_recurring and order.recurrence_pattern:
-        # Use delivery date as the base for next occurrence, not creation date
-        delivery_date = datetime.fromisoformat(order.delivery_date).date() if isinstance(order.delivery_date, str) else order.delivery_date.date()
-        frequency_type = order.recurrence_pattern.get('frequency_type')
-        frequency_value = order.recurrence_pattern.get('frequency_value', 1)
-        
-        # Calculate next occurrence date from first delivery date
-        if frequency_type == 'daily':
-            next_date = delivery_date + timedelta(days=frequency_value)
-        elif frequency_type == 'weekly':
-            next_date = delivery_date + timedelta(weeks=frequency_value)
-        elif frequency_type == 'monthly':
-            next_date = delivery_date + timedelta(days=30 * frequency_value)
-        else:
-            next_date = delivery_date + timedelta(days=1)
-        
-        order_dict['next_occurrence_date'] = next_date.isoformat()
+    # Handle recurring orders - don't set next_occurrence_date yet
+    # It will be set after the first delivery is completed
+    # if order.is_recurring and order.recurrence_pattern:
+    #     delivery_date = datetime.fromisoformat(order.delivery_date).date() if isinstance(order.delivery_date, str) else order.delivery_date.date()
+    #     frequency_type = order.recurrence_pattern.get('frequency_type')
+    #     frequency_value = order.recurrence_pattern.get('frequency_value', 1)
+    #     
+    #     if frequency_type == 'daily':
+    #         next_date = delivery_date + timedelta(days=frequency_value)
+    #     elif frequency_type == 'weekly':
+    #         next_date = delivery_date + timedelta(weeks=frequency_value)
+    #     elif frequency_type == 'monthly':
+    #         next_date = delivery_date + timedelta(days=30 * frequency_value)
+    #     else:
+    #         next_date = delivery_date + timedelta(days=1)
+    #     
+    #     order_dict['next_occurrence_date'] = next_date.isoformat()
     
     order_obj = Order(**order_dict)
     
@@ -1688,24 +1687,23 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     order_dict['created_by'] = current_user['id']
     order_dict['is_locked'] = False
     
-    # Handle recurring orders
-    if order.is_recurring and order.recurrence_pattern:
-        # Use delivery_date as the base for calculating next occurrence
-        delivery_date = datetime.fromisoformat(order.delivery_date).date()
-        frequency_type = order.recurrence_pattern.get('frequency_type')
-        frequency_value = order.recurrence_pattern.get('frequency_value', 1)
-        
-        # Calculate next occurrence date from delivery date
-        if frequency_type == 'daily':
-            next_date = delivery_date + timedelta(days=frequency_value)
-        elif frequency_type == 'weekly':
-            next_date = delivery_date + timedelta(weeks=frequency_value)
-        elif frequency_type == 'monthly':
-            next_date = delivery_date + timedelta(days=30 * frequency_value)
-        else:
-            next_date = delivery_date + timedelta(days=1)
-        
-        order_dict['next_occurrence_date'] = next_date.isoformat()
+    # Handle recurring orders - don't set next_occurrence_date on creation
+    # It will be calculated after first delivery is completed
+    # if order.is_recurring and order.recurrence_pattern:
+    #     delivery_date = datetime.fromisoformat(order.delivery_date).date()
+    #     frequency_type = order.recurrence_pattern.get('frequency_type')
+    #     frequency_value = order.recurrence_pattern.get('frequency_value', 1)
+    #     
+    #     if frequency_type == 'daily':
+    #         next_date = delivery_date + timedelta(days=frequency_value)
+    #     elif frequency_type == 'weekly':
+    #         next_date = delivery_date + timedelta(weeks=frequency_value)
+    #     elif frequency_type == 'monthly':
+    #         next_date = delivery_date + timedelta(days=30 * frequency_value)
+    #     else:
+    #         next_date = delivery_date + timedelta(days=1)
+    #     
+    #     order_dict['next_occurrence_date'] = next_date.isoformat()
     
     order_obj = Order(**order_dict)
     
