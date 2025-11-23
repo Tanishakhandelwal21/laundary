@@ -92,6 +92,20 @@ def require_role(allowed_roles: List[str]):
         return current_user
     return role_checker
 
+async def get_next_order_number() -> str:
+    """Generate next order number using atomic MongoDB counter to prevent duplicates"""
+    counter = await db.counters.find_one_and_update(
+        {"_id": "order_number"},
+        {"$inc": {"sequence_value": 1}},
+        upsert=True,
+        return_document=True
+    )
+    if counter is None:
+        # First time initialization
+        await db.counters.insert_one({"_id": "order_number", "sequence_value": 1})
+        return "ORD-000001"
+    return f"ORD-{counter['sequence_value']:06d}"
+
 async def check_and_lock_order(order: dict) -> dict:
     """
     Check if order should be automatically locked.
@@ -269,9 +283,8 @@ async def auto_create_next_recurring_order(order: dict):
     # Calculate next pickup date (2 days before delivery by default)
     next_pickup_date = next_delivery_date - timedelta(days=2)
     
-    # Generate sequential order number
-    count = await db.orders.count_documents({})
-    order_number = f"ORD-{count:06d}"
+    # Generate unique order number atomically
+    order_number = await get_next_order_number()
     
     # Create new order
     new_order = {
@@ -505,9 +518,8 @@ async def create_recurring_orders_for_6_months(parent_order_dict: dict):
         # Calculate pickup date (2 days before delivery)
         current_pickup_date = current_delivery_date - timedelta(days=2)
         
-        # Generate sequential order number
-        count = await db.orders.count_documents({})
-        order_number = f"ORD-{count:06d}"
+        # Generate unique order number atomically
+        order_number = await get_next_order_number()
         
         # Create new order
         new_order = {
@@ -1567,9 +1579,8 @@ async def delete_frequency_template(template_id: str, current_user: dict = Depen
 # Order Management Routes
 @api_router.post("/orders", response_model=Order)
 async def create_order(order: OrderBase, current_user: dict = Depends(require_role(["owner", "admin"]))):
-    # Generate order number
-    count = await db.orders.count_documents({}) + 1
-    order_number = f"ORD-{count:06d}"
+    # Generate unique order number atomically
+    order_number = await get_next_order_number()
     
     # Calculate total
     total_amount = sum(item.price * item.quantity for item in order.items)
@@ -1667,9 +1678,8 @@ async def create_order(order: OrderBase, current_user: dict = Depends(require_ro
 @api_router.post("/orders/customer", response_model=Order)
 async def create_customer_order(order: CustomerOrderCreate, current_user: dict = Depends(require_role(["customer"]))):
     """Allow customers to create their own orders"""
-    # Generate order number
-    count = await db.orders.count_documents({}) + 1
-    order_number = f"ORD-{count:06d}"
+    # Generate unique order number atomically
+    order_number = await get_next_order_number()
     
     # Get customer details
     customer = await db.users.find_one({"id": current_user['id']})
