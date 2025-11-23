@@ -4780,6 +4780,9 @@ function OwnerDashboard() {
                             Customer
                           </th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            Delivery Date
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                             Type
                           </th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
@@ -4808,6 +4811,9 @@ function OwnerDashboard() {
                             <td className="px-4 py-3 text-sm text-gray-600">
                               {order.customer_name}
                             </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              {order.delivery_date ? new Date(order.delivery_date).toLocaleDateString() : '-'}
+                            </td>
                             <td className="px-4 py-3">
                               {order.is_recurring ? (
                                 <span className="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-800 flex items-center gap-1 w-fit">
@@ -4835,7 +4841,19 @@ function OwnerDashboard() {
                                       Updating...
                                     </span>
                                   ) : (
-                                    <SelectValue />
+                                    <SelectValue placeholder="Select Status">
+                                      {order.status === "pending" ? "Pending" :
+                                       order.status === "confirmed" ? "Confirmed" :
+                                       order.status === "scheduled" ? "Scheduled" :
+                                       order.status === "processing" ? "Processing" :
+                                       order.status === "ready" ? "Ready for Pickup" :
+                                       order.status === "ready_for_pickup" ? "Ready for Pickup" :
+                                       order.status === "out-for-delivery" ? "Out for Delivery" :
+                                       order.status === "out_for_delivery" ? "Out for Delivery" :
+                                       order.status === "delivered" ? "Delivered" :
+                                       order.status === "cancelled" ? "Cancelled" :
+                                       order.status || "Select Status"}
+                                    </SelectValue>
                                   )}
                                 </SelectTrigger>
                                 <SelectContent>

@@ -119,7 +119,7 @@ function CustomerDashboard() {
         <div class="customer-section">
           <h3>Customer Information</h3>
           <div class="customer-info">
-            <strong>Customer Name:</strong> ${user.name}<br>
+            <strong>Customer Name:</strong> ${user?.full_name || 'Customer'}<br>
             <strong>Delivery Address:</strong> ${order.delivery_address}<br>
             <strong>Date of Delivery:</strong> ${invoiceDate}
           </div>
@@ -1392,20 +1392,6 @@ function CustomerDashboard() {
                     </div>
 
                     <div>
-                      <Label>Pickup Address (Read-Only)</Label>
-                      <Input
-                        value={orderForm.pickup_address}
-                        readOnly
-                        disabled
-                        className="bg-gray-100 cursor-not-allowed"
-                        data-testid="customer-pickup-address"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        📍 Business pickup address (fixed location)
-                      </p>
-                    </div>
-
-                    <div>
                       <Label>Delivery Address</Label>
                       <Input
                         value={orderForm.delivery_address}
@@ -1513,6 +1499,7 @@ function CustomerDashboard() {
                       )}
                     </div>
 
+                    {/* Always show download receipt button when editing an order */}
                     {editingOrderId &&
                       orders.find((o) => o.id === editingOrderId) && (
                         <Button
@@ -1587,7 +1574,12 @@ function CustomerDashboard() {
                     </Label>
                     <Select value={orderSortBy} onValueChange={setOrderSortBy}>
                       <SelectTrigger className="w-[150px]">
-                        <SelectValue />
+                        <SelectValue placeholder="Sort by">
+                          {orderSortBy === "created_at" && "Order Date"}
+                          {orderSortBy === "delivery_date" && "Delivery Date"}
+                          {orderSortBy === "status" && "Status"}
+                          {orderSortBy === "total_amount" && "Amount"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="created_at">Order Date</SelectItem>
@@ -1625,7 +1617,10 @@ function CustomerDashboard() {
                       onValueChange={setOrderDateField}
                     >
                       <SelectTrigger className="w-[150px]">
-                        <SelectValue />
+                        <SelectValue placeholder="Select field">
+                          {orderDateField === "created_at" && "Order Date"}
+                          {orderDateField === "delivery_date" && "Delivery Date"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="created_at">Order Date</SelectItem>
@@ -1644,7 +1639,13 @@ function CustomerDashboard() {
                       onValueChange={setOrderDateFilter}
                     >
                       <SelectTrigger className="w-[130px]">
-                        <SelectValue />
+                        <SelectValue placeholder="Select date">
+                          {orderDateFilter === "all" && "All Dates"}
+                          {orderDateFilter === "today" && "Today"}
+                          {orderDateFilter === "week" && "This Week"}
+                          {orderDateFilter === "month" && "This Month"}
+                          {orderDateFilter === "custom" && "Custom Range"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Dates</SelectItem>
@@ -1684,7 +1685,11 @@ function CustomerDashboard() {
                       onValueChange={setOrderTypeFilter}
                     >
                       <SelectTrigger className="w-[130px]">
-                        <SelectValue />
+                        <SelectValue placeholder="Select type">
+                          {orderTypeFilter === "all" && "All Types"}
+                          {orderTypeFilter === "regular" && "Regular"}
+                          {orderTypeFilter === "recurring" && "Recurring"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Types</SelectItem>
@@ -2103,60 +2108,71 @@ function CustomerDashboard() {
 
                             {/* Actions Column */}
                             <td className="p-4">
-                              {order.status !== "ready_for_pickup" &&
-                              order.status !== "delivered" &&
-                              order.status !== "cancelled" &&
-                              canModifyOrder(
-                                order.delivery_date,
-                                order.is_locked
-                              ) ? (
-                                <div className="flex flex-col gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleEditOrder(order)}
-                                    data-testid={`edit-order-${order.id}`}
-                                    className="w-full"
-                                    disabled={
-                                      order.modification_status ===
+                              <div className="flex flex-col gap-2">
+                                {/* Always show download receipt button */}
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => generateInvoice(order)}
+                                  className="w-full"
+                                  title="Download delivery receipt"
+                                >
+                                  <FileText className="w-4 h-4 mr-1" />
+                                  Receipt
+                                </Button>
+                                
+                                {/* Show edit/cancel only if order can be modified */}
+                                {order.status !== "ready_for_pickup" &&
+                                order.status !== "delivered" &&
+                                order.status !== "cancelled" &&
+                                canModifyOrder(
+                                  order.delivery_date,
+                                  order.is_locked
+                                ) && (
+                                  <>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleEditOrder(order)}
+                                      data-testid={`edit-order-${order.id}`}
+                                      className="w-full"
+                                      disabled={
+                                        order.modification_status ===
+                                        "pending_customer_edit"
+                                      }
+                                      title={
+                                        order.modification_status ===
+                                        "pending_customer_edit"
+                                          ? "Edit request pending approval"
+                                          : "Edit order"
+                                      }
+                                    >
+                                      <Edit className="w-4 h-4 mr-1" />
+                                      {order.modification_status ===
                                       "pending_customer_edit"
-                                    }
-                                    title={
-                                      order.modification_status ===
-                                      "pending_customer_edit"
-                                        ? "Edit request pending approval"
-                                        : "Edit order"
-                                    }
-                                  >
-                                    <Edit className="w-4 h-4 mr-1" />
-                                    {order.modification_status ===
-                                    "pending_customer_edit"
-                                      ? "Pending"
-                                      : "Edit"}
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() => handleCancelOrder(order.id)}
-                                    disabled={cancellingOrderId === order.id}
-                                    data-testid={`cancel-order-${order.id}`}
-                                    className="w-full"
-                                  >
-                                    {cancellingOrderId === order.id ? (
-                                      <>
-                                        <Clock className="w-4 h-4 mr-1 animate-spin" />
-                                        Cancelling...
-                                      </>
-                                    ) : (
-                                      "Cancel"
-                                    )}
-                                  </Button>
-                                </div>
-                              ) : (
-                                <div className="text-xs text-gray-500 text-center">
-                                  No actions
-                                </div>
-                              )}
+                                        ? "Pending"
+                                        : "Edit"}
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      onClick={() => handleCancelOrder(order.id)}
+                                      disabled={cancellingOrderId === order.id}
+                                      data-testid={`cancel-order-${order.id}`}
+                                      className="w-full"
+                                    >
+                                      {cancellingOrderId === order.id ? (
+                                        <>
+                                          <Clock className="w-4 h-4 mr-1 animate-spin" />
+                                          Cancelling...
+                                        </>
+                                      ) : (
+                                        "Cancel"
+                                      )}
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         </React.Fragment>

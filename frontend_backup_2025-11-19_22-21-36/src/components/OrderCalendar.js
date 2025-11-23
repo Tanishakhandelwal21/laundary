@@ -89,9 +89,10 @@ const OrderCalendar = ({ orders = [], hidePricing = false }) => {
     filteredOrders.forEach(order => {
       // Only add delivery date (pickup orders are removed from calendar)
       // Check if delivery_date exists and is not null/empty
-      if (order.delivery_date && order.delivery_date.trim() && (dateTypeFilter === 'all' || dateTypeFilter === 'delivery')) {
+      const deliveryDateValue = typeof order.delivery_date === 'string' ? order.delivery_date.trim() : order.delivery_date;
+      if (deliveryDateValue && (dateTypeFilter === 'all' || dateTypeFilter === 'delivery')) {
         try {
-          const deliveryDate = format(parseISO(order.delivery_date), 'yyyy-MM-dd');
+          const deliveryDate = format(parseISO(String(deliveryDateValue)), 'yyyy-MM-dd');
           if (!grouped[deliveryDate]) grouped[deliveryDate] = { pickup: [], delivery: [] };
           grouped[deliveryDate].delivery.push(order);
 
@@ -561,7 +562,7 @@ const OrderCalendar = ({ orders = [], hidePricing = false }) => {
                       <span className="font-semibold">Pickup</span>
                     </div>
                     <p className="text-sm text-blue-900 font-medium">
-                      {format(parseISO(selectedOrder.pickup_date), 'MMM dd, yyyy h:mm a')}
+                      {format(parseISO(selectedOrder.pickup_date), 'MMM dd, yyyy')}
                     </p>
                     <div className="flex items-start gap-2 mt-2">
                       <MapPin className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
@@ -576,7 +577,7 @@ const OrderCalendar = ({ orders = [], hidePricing = false }) => {
                     <span className="font-semibold">Delivery</span>
                   </div>
                   <p className="text-sm text-green-900 font-medium">
-                    {selectedOrder.delivery_date && format(parseISO(selectedOrder.delivery_date), 'MMM dd, yyyy h:mm a')}
+                    {selectedOrder.delivery_date && format(parseISO(selectedOrder.delivery_date), 'MMM dd, yyyy')}
                   </p>
                   <div className="flex items-start gap-2 mt-2">
                     <MapPin className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
@@ -608,19 +609,19 @@ const OrderCalendar = ({ orders = [], hidePricing = false }) => {
                 <div className="p-4 bg-teal-50 rounded-lg border border-teal-200 space-y-2">
                   <div className="flex justify-between text-sm text-gray-700">
                     <span>Base Amount:</span>
-                    <span className="font-medium">${(selectedOrder.total_amount / 1.10).toFixed(2)}</span>
+                    <span className="font-medium">${selectedOrder.total_amount.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-gray-700">
                     <span>GST (10%):</span>
-                    <span className="font-medium">${(selectedOrder.total_amount - selectedOrder.total_amount / 1.10).toFixed(2)}</span>
+                    <span className="font-medium">${(selectedOrder.total_amount * 0.10).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center pt-2 border-t border-teal-300">
                     <div className="flex items-center gap-2">
                       <DollarSign className="w-5 h-5 text-teal-600" />
-                      <span className="font-semibold text-gray-900">Total Amount</span>
+                      <span className="font-semibold text-gray-900">Total Amount (Inc. GST)</span>
                     </div>
                     <span className="text-2xl font-bold text-teal-600">
-                      ${selectedOrder.total_amount?.toFixed(2)}
+                      ${(selectedOrder.total_amount * 1.10).toFixed(2)}
                     </span>
                   </div>
                 </div>

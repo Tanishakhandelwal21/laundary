@@ -94,8 +94,10 @@ def require_role(allowed_roles: List[str]):
 
 async def check_and_lock_order(order: dict) -> dict:
     """
-    Check if order should be automatically locked at 11:59 PM on the delivery date.
-    Customer can edit until the end of the delivery date.
+    Check if order should be automatically locked.
+    Customer can edit until 11:59 PM the day BEFORE the delivery date.
+    For example: If delivery is Nov 24, customer can edit until Nov 23 11:59 PM.
+    After midnight on Nov 24, the order is locked.
     Returns the order with updated lock status if needed.
     """
     # Skip if already locked or doesn't have delivery_date
@@ -115,14 +117,15 @@ async def check_and_lock_order(order: dict) -> dict:
         else:
             delivery_date = datetime.fromisoformat(delivery_date_str).date()
         
-        # Calculate lock time: 11:59:59 PM on the delivery date
-        lock_datetime = datetime.combine(delivery_date, datetime.max.time())
+        # Calculate lock time: 11:59:59 PM the day BEFORE delivery
+        day_before_delivery = delivery_date - timedelta(days=1)
+        lock_datetime = datetime.combine(day_before_delivery, datetime.max.time())
         
         # Make timezone-aware
         if lock_datetime.tzinfo is None:
             lock_datetime = lock_datetime.replace(tzinfo=timezone.utc)
         
-        # Check if current time is past the lock time (after 11:59 PM on delivery date)
+        # Check if current time is past the lock time (after 11:59 PM day before delivery)
         now = datetime.now(timezone.utc)
         
         if now >= lock_datetime:
@@ -136,7 +139,7 @@ async def check_and_lock_order(order: dict) -> dict:
                 {"$set": {"is_locked": True, "locked_at": now.isoformat()}}
             )
             
-            logging.info(f"Order {order['id']} automatically locked at {now}")
+            logging.info(f"Order {order['id']} automatically locked at {now} (delivery date: {delivery_date})")
     except Exception as e:
         logging.error(f"Error checking lock status for order {order['id']}: {str(e)}")
     
@@ -210,7 +213,8 @@ async def roll_forward_recurring_order(order: dict, notes: Optional[str] = None)
             "$set": {
                 "delivery_date": next_delivery_date.isoformat(),
                 "next_occurrence_date": next_next_date.isoformat(),
-                "status": "scheduled",
+                # Keep status as delivered, don't reset to scheduled
+                # "status": "scheduled",  # Commented out - keep current delivered status
                 "delivery_status": "assigned",
                 "picked_up_at": None,
                 "delivered_at": None,
@@ -265,10 +269,14 @@ async def auto_create_next_recurring_order(order: dict):
     # Calculate next pickup date (2 days before delivery by default)
     next_pickup_date = next_delivery_date - timedelta(days=2)
     
+    # Generate sequential order number
+    count = await db.orders.count_documents({})
+    order_number = f"ORD-{count:06d}"
+    
     # Create new order
     new_order = {
         'id': str(uuid.uuid4()),
-        'order_number': f"ORD-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}",
+        'order_number': order_number,
         'customer_id': order['customer_id'],
         'customer_name': order['customer_name'],
         'customer_email': order['customer_email'],
@@ -317,7 +325,16 @@ async def auto_create_next_recurring_order(order: dict):
     # Insert new order
     await db.orders.insert_one(new_order)
     
-    logging.info(f"Auto-created next recurring order {new_order['order_number']} for customer {order['customer_id']}")
+    # Update the parent order's next_occurrence_date to match the newly created order's delivery date
+    await db.orders.update_one(
+        {"id": order['id']},
+        {"$set": {
+            "next_occurrence_date": next_delivery_date.isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    logging.info(f"Auto-created next recurring order {new_order['order_number']} for customer {order['customer_id']}, parent order next_occurrence_date updated to {next_delivery_date.isoformat()}")
     
     # Send notification to customer
     customer = await db.users.find_one({"id": order['customer_id']})
@@ -329,38 +346,97 @@ async def auto_create_next_recurring_order(order: dict):
             "order"
         )
         
-        # Send email notification
-        base_price = new_order['total_amount'] / 1.10
-        gst = new_order['total_amount'] - base_price
+        # Send email notification with full details
+        # total_amount is the base price, GST is 10% of base, final total = base + GST
+        base_price = new_order['total_amount']
+        gst = base_price * 0.10
+        final_total = base_price + gst
+        
+        # Build items list HTML
+        items_html = ""
+        for item in new_order.get('items', []):
+            item_total = item.get('price', 0) * item.get('quantity', 0)
+            items_html += f"""
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{item.get('sku_name', 'Item')}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: center;">{item.get('quantity', 0)}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">${item.get('price', 0):.2f}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">${item_total:.2f}</td>
+                    </tr>
+            """
+        
         send_email(
             to_email=customer['email'],
-            subject="Next Recurring Order Created",
-            body=f"""
+            subject=f"New Recurring Order Created - {new_order['order_number']}",
+            html_content=f"""
             <html>
             <body>
-                <h2>Next Recurring Order Created</h2>
+                <h2>🔄 Next Recurring Order Created</h2>
                 <p>Dear {customer.get('full_name', 'Customer')},</p>
-                <p>Your next recurring order has been automatically created:</p>
-                <ul>
-                    <li><strong>Order Number:</strong> {new_order['order_number']}</li>
-                    <li><strong>Pickup Date:</strong> {next_pickup_date.strftime('%Y-%m-%d')}</li>
-                    <li><strong>Delivery Date:</strong> {next_delivery_date.strftime('%Y-%m-%d')}</li>
-                </ul>
-                <div style="background: #f9fafb; padding: 12px; border-radius: 6px; margin: 10px 0;">
-                    <div style="display: flex; justify-content: space-between; padding: 4px 0;">
-                        <span>Base Price:</span>
-                        <span>${base_price:.2f}</span>
+                <p>Your next recurring order has been automatically created and is now scheduled:</p>
+                
+                <div style="background: #f0f9ff; border-left: 4px solid #40E0D0; padding: 15px; margin: 20px 0;">
+                    <h3 style="margin: 0 0 10px 0; color: #333;">Order #{new_order['order_number']}</h3>
+                    <p style="margin: 5px 0;"><strong>📅 Pickup Date:</strong> {next_pickup_date.strftime('%B %d, %Y')}</p>
+                    <p style="margin: 5px 0;"><strong>🚚 Delivery Date:</strong> {next_delivery_date.strftime('%B %d, %Y')}</p>
+                </div>
+                
+                <h3>Customer Information</h3>
+                <table style="width: 100%; margin-bottom: 20px;">
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Name:</td>
+                        <td style="padding: 5px 0; font-weight: bold;">{customer.get('full_name', 'N/A')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Email:</td>
+                        <td style="padding: 5px 0;">{customer.get('email', 'N/A')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Phone:</td>
+                        <td style="padding: 5px 0;">{customer.get('phone', 'N/A')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px 0; color: #666; vertical-align: top;">Pickup Address:</td>
+                        <td style="padding: 5px 0;">{new_order.get('pickup_address', 'N/A')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px 0; color: #666; vertical-align: top;">Delivery Address:</td>
+                        <td style="padding: 5px 0;">{new_order.get('delivery_address', 'N/A')}</td>
+                    </tr>
+                </table>
+                
+                <h3>Order Items</h3>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                    <thead>
+                        <tr style="background: #f5f5f5;">
+                            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Item</th>
+                            <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
+                            <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Price</th>
+                            <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+{items_html}
+                    </tbody>
+                </table>
+                
+                <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin: 20px 0;">
+                    <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+                        <span style="color: #666;">Base Price:</span>
+                        <span style="font-weight: 500;">${base_price:.2f}</span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; padding: 4px 0;">
-                        <span>GST (10%):</span>
-                        <span>${gst:.2f}</span>
+                    <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+                        <span style="color: #666;">GST (10%):</span>
+                        <span style="font-weight: 500;">${gst:.2f}</span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid #e0e0e0; margin-top: 4px;">
-                        <strong>Total (Inc. GST):</strong>
-                        <strong style="color: #40E0D0;">${new_order['total_amount']:.2f}</strong>
+                    <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 2px solid #e0e0e0; margin-top: 6px;">
+                        <strong style="font-size: 16px;">Total (Inc. GST):</strong>
+                        <strong style="color: #40E0D0; font-size: 18px;">${final_total:.2f}</strong>
                     </div>
                 </div>
+                
                 <p>You can view and manage your order in your dashboard.</p>
+                <p><em>This is your recurring order - it will continue automatically based on your schedule.</em></p>
             </body>
             </html>
             """
@@ -376,12 +452,108 @@ Your next recurring order {new_order['order_number']} has been automatically cre
 
 Pickup: {next_pickup_date.strftime('%Y-%m-%d')}
 Delivery: {next_delivery_date.strftime('%Y-%m-%d')}
-Base: ${base_price:.2f} + GST: ${gst:.2f} = Total: ${new_order['total_amount']:.2f}
+Base: ${base_price:.2f} + GST: ${gst:.2f} = Total: ${final_total:.2f}
 
 View details in your dashboard."""
             )
     
     return new_order
+
+async def create_recurring_orders_for_6_months(parent_order_dict: dict):
+    """
+    Create 6 months worth of recurring orders upfront when a recurring order is created.
+    Each order will have a sequential order number and proper scheduling.
+    """
+    if not parent_order_dict.get('is_recurring') or not parent_order_dict.get('recurrence_pattern'):
+        return []
+    
+    created_orders = []
+    frequency_data = parent_order_dict['recurrence_pattern']
+    frequency_type = frequency_data['frequency_type']
+    frequency_value = frequency_data.get('frequency_value', 1)
+    
+    # Parse the first delivery date
+    try:
+        current_delivery_dt = datetime.fromisoformat(str(parent_order_dict['delivery_date']).replace('Z', '+00:00'))
+        current_delivery_date = current_delivery_dt.date()
+    except Exception as e:
+        logging.error(f"Failed to parse delivery_date for recurring orders: {parent_order_dict.get('delivery_date')} - {e}")
+        return []
+    
+    # Calculate 6 months from first delivery
+    six_months_later = current_delivery_date + timedelta(days=180)
+    
+    # Generate orders for next 6 months
+    iteration = 0
+    max_iterations = 200  # Safety limit
+    
+    while current_delivery_date < six_months_later and iteration < max_iterations:
+        # Calculate next delivery date
+        if frequency_type == 'daily':
+            current_delivery_date = current_delivery_date + timedelta(days=frequency_value)
+        elif frequency_type == 'weekly':
+            current_delivery_date = current_delivery_date + timedelta(weeks=frequency_value)
+        elif frequency_type == 'monthly':
+            current_delivery_date = current_delivery_date + timedelta(days=30 * frequency_value)
+        else:
+            break
+        
+        # Don't create if beyond 6 months
+        if current_delivery_date >= six_months_later:
+            break
+        
+        # Calculate pickup date (2 days before delivery)
+        current_pickup_date = current_delivery_date - timedelta(days=2)
+        
+        # Generate sequential order number
+        count = await db.orders.count_documents({})
+        order_number = f"ORD-{count:06d}"
+        
+        # Create new order
+        new_order = {
+            'id': str(uuid.uuid4()),
+            'order_number': order_number,
+            'customer_id': parent_order_dict['customer_id'],
+            'customer_name': parent_order_dict['customer_name'],
+            'customer_email': parent_order_dict['customer_email'],
+            'items': parent_order_dict['items'],
+            'pickup_date': current_pickup_date.isoformat(),
+            'delivery_date': current_delivery_date.isoformat(),
+            'pickup_address': parent_order_dict['pickup_address'],
+            'delivery_address': parent_order_dict['delivery_address'],
+            'special_instructions': parent_order_dict.get('special_instructions', ''),
+            'total_amount': parent_order_dict['total_amount'],
+            'status': 'scheduled',
+            'is_recurring': False,  # These are instances, not the template
+            'parent_recurring_id': parent_order_dict['id'],  # Link to parent recurring order
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'is_locked': False,
+            'created_by': parent_order_dict.get('created_by')
+        }
+        
+        # Carry forward driver assignment if exists
+        driver_id = parent_order_dict.get('driver_id')
+        if driver_id:
+            new_order['driver_id'] = driver_id
+            new_order['delivery_status'] = 'assigned'
+            try:
+                driver_doc = await db.users.find_one({"id": driver_id})
+                if driver_doc:
+                    new_order['driver_name'] = driver_doc.get('full_name')
+            except Exception:
+                pass
+        
+        # Insert order
+        await db.orders.insert_one(new_order)
+        created_orders.append(new_order)
+        
+        logging.info(f"Created recurring instance {order_number} for delivery on {current_delivery_date}")
+        
+        iteration += 1
+    
+    logging.info(f"Created {len(created_orders)} recurring order instances for 6 months")
+    return created_orders
 
 # Pydantic Models
 class UserBase(BaseModel):
@@ -1143,16 +1315,14 @@ async def toggle_user_status(
         {"$set": {"is_active": new_status}}
     )
     
-    # Send notification to user
+    # Send in-app notification to user
     status_text = "enabled" if new_status else "disabled"
-    send_email(
-        to_email=user['email'],
-        subject=f"Account {status_text.title()}",
-        html_content=f"""
-        <h2>Hello {user['full_name']},</h2>
-        <p>Your account has been <strong>{status_text}</strong> by an administrator.</p>
-        {f'<p>You can now log in to your account.</p>' if new_status else '<p>Please contact support if you believe this is an error.</p>'}
-        """
+    await send_notification(
+        user_id=user['id'],
+        email=user['email'],
+        title=f"Account {status_text.title()}",
+        message=f"Your account has been {status_text} by an administrator." + (" You can now log in to your account." if new_status else " Please contact support if you believe this is an error."),
+        notif_type="account_status"
     )
     
     return {
@@ -1433,6 +1603,11 @@ async def create_order(order: OrderBase, current_user: dict = Depends(require_ro
     
     await db.orders.insert_one(doc)
     
+    # If recurring order, create 6 months worth of orders upfront
+    if order.is_recurring and order.recurrence_pattern:
+        await create_recurring_orders_for_6_months(doc)
+        logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
+    
     # Send notifications to customer, owner, and admin
     order_type = "recurring order" if order.is_recurring else "order"
     notification_message = f"New {order_type} #{order_number} has been created"
@@ -1452,7 +1627,13 @@ async def create_order(order: OrderBase, current_user: dict = Depends(require_ro
         order_details = {
             'pickup_date': order.pickup_date if order.pickup_date else None,
             'delivery_date': order.delivery_date,
-            'total_amount': total_amount
+            'total_amount': total_amount,
+            'customer_name': customer.get('full_name', 'N/A'),
+            'customer_email': customer.get('email', 'N/A'),
+            'customer_phone': customer.get('phone', 'N/A'),
+            'pickup_address': order.pickup_address,
+            'delivery_address': order.delivery_address,
+            'items': [item.model_dump() for item in order.items]
         }
         send_order_status_email(
             to_email=customer['email'],
@@ -1530,9 +1711,15 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     
     await db.orders.insert_one(doc)
     
+    # If recurring order, create 6 months worth of orders upfront
+    if order.is_recurring and order.recurrence_pattern:
+        await create_recurring_orders_for_6_months(doc)
+        logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
+    
     # Prepare detailed order info
-    base_price = total_amount / 1.10
-    gst = total_amount - base_price
+    base_price = total_amount  # total_amount is already the base price (sum of item prices)
+    gst = total_amount * 0.10
+    total_inc_gst = total_amount + gst
     items_list = "\n".join([f"    - {item.sku_name}: {item.quantity} x ${item.price:.2f} = ${item.quantity * item.price:.2f}" for item in order.items])
     order_details = f"""
     Order Number: {order_number}
@@ -1543,7 +1730,7 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     Pricing:
     - Base Price: ${base_price:.2f}
     - GST (10%): ${gst:.2f}
-    - Total (Inc. GST): ${total_amount:.2f}
+    - Total (Inc. GST): ${total_inc_gst:.2f}
     
     Items:
 {items_list}
@@ -1573,7 +1760,13 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     order_details_dict = {
         'pickup_date': order.pickup_date if order.pickup_date else None,
         'delivery_date': order.delivery_date,
-        'total_amount': total_amount
+        'total_amount': total_amount,
+        'customer_name': customer.get('full_name', 'N/A'),
+        'customer_email': customer.get('email', 'N/A'),
+        'customer_phone': customer.get('phone', 'N/A'),
+        'pickup_address': order.pickup_address,
+        'delivery_address': order.delivery_address,
+        'items': [item.model_dump() for item in order.items]
     }
     send_order_status_email(
         to_email=customer['email'],
@@ -1658,7 +1851,19 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
     # Check if order is locked - only applies to customers, not owner/admin
     if current_user['role'] == 'customer':
         if order_doc.get('is_locked', False):
-            raise HTTPException(status_code=400, detail="Cannot modify order - the delivery date has passed. Contact us for changes.")
+            # Get delivery date for better error message
+            delivery_date = order_doc.get('delivery_date', '')
+            if 'T' in delivery_date:
+                delivery_date = datetime.fromisoformat(delivery_date).date().strftime('%B %d, %Y')
+            else:
+                try:
+                    delivery_date = datetime.fromisoformat(delivery_date).date().strftime('%B %d, %Y')
+                except:
+                    delivery_date = delivery_date
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Cannot modify order - orders are locked at midnight on the delivery date ({delivery_date}). Please contact us for changes."
+            )
     
     # Customer can only modify their own orders, and all customer edits now require approval
     if current_user['role'] == 'customer':
@@ -1711,9 +1916,27 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
 
     await db.orders.update_one({"id": order_id}, {"$set": update_data})
     
-    # Roll-forward recurring order if status changed to delivered or completed BEFORE fetching updated order
-    if status_changed and new_status in ['delivered', 'completed'] and order_doc.get('is_recurring'):
-        await roll_forward_recurring_order(order_doc)
+    # For recurring order INSTANCES (not the parent), check if we need to create more future orders
+    if status_changed and new_status in ['delivered', 'completed']:
+        # Check if this is a recurring instance (has parent_recurring_id)
+        if order_doc.get('parent_recurring_id'):
+            # Find the parent recurring order
+            parent_order = await db.orders.find_one({"id": order_doc['parent_recurring_id']})
+            if parent_order and parent_order.get('is_recurring'):
+                # Count future scheduled orders for this recurring order
+                future_orders_count = await db.orders.count_documents({
+                    "parent_recurring_id": parent_order['id'],
+                    "status": "scheduled",
+                    "delivery_date": {"$gt": datetime.now(timezone.utc).isoformat()}
+                })
+                
+                # If less than 10 future orders, create more to maintain 6 months buffer
+                if future_orders_count < 10:
+                    logging.info(f"Replenishing recurring orders for parent {parent_order['order_number']}, current future count: {future_orders_count}")
+                    await create_recurring_orders_for_6_months(parent_order)
+        # If this is the parent recurring order itself being marked delivered
+        elif order_doc.get('is_recurring'):
+            await auto_create_next_recurring_order(order_doc)
     
     updated_order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     updated_order['created_at'] = datetime.fromisoformat(updated_order['created_at'])
@@ -1729,7 +1952,13 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
         order_details = {
             'pickup_date': updated_order.get('pickup_date'),
             'delivery_date': updated_order.get('delivery_date'),
-            'total_amount': updated_order.get('total_amount')
+            'total_amount': updated_order.get('total_amount'),
+            'customer_name': customer.get('full_name', 'N/A'),
+            'customer_email': customer.get('email', 'N/A'),
+            'customer_phone': customer.get('phone', 'N/A'),
+            'pickup_address': updated_order.get('pickup_address', 'N/A'),
+            'delivery_address': updated_order.get('delivery_address', 'N/A'),
+            'items': updated_order.get('items', [])
         }
         send_order_status_email(
             to_email=customer['email'],
@@ -1742,8 +1971,9 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
     # Send in-app notifications only for status changes to 'delivered'
     if status_changed and new_status == 'delivered':
         # Prepare order details for notifications
-        base_price = updated_order.get('total_amount', 0) / 1.10
-        gst = updated_order.get('total_amount', 0) - base_price
+        base_price = updated_order.get('total_amount', 0)  # total_amount is the base price
+        gst = base_price * 0.10
+        total_inc_gst = base_price + gst
         order_details = f"""
     Order Number: {order_doc['order_number']}
     Status: {updated_order.get('status', 'N/A')}
@@ -1751,7 +1981,7 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
     Pricing:
     - Base Price: ${base_price:.2f}
     - GST (10%): ${gst:.2f}
-    - Total (Inc. GST): ${updated_order.get('total_amount', 0):.2f}
+    - Total (Inc. GST): ${total_inc_gst:.2f}
     
     Pickup Date: {updated_order.get('pickup_date', 'N/A')}
     Delivery Date: {updated_order.get('delivery_date', 'N/A')}
@@ -2186,23 +2416,6 @@ async def propose_order_modification(
             "Order Modification Pending Approval",
             f"Changes have been proposed for your recurring order {order['order_number']}. Please review and approve or reject the changes.",
             "order"
-        )
-        
-        # Send email notification
-        send_email(
-            to_email=customer['email'],
-            subject=f"Approval Needed: Changes to Order {order['order_number']}",
-            body=f"""
-            <html>
-            <body>
-                <h2>Order Modification Pending Your Approval</h2>
-                <p>Dear {customer.get('full_name', 'Customer')},</p>
-                <p>Changes have been proposed for your recurring order <strong>{order['order_number']}</strong>.</p>
-                <p>Please log in to your dashboard to review and approve or reject these changes.</p>
-                <p><strong>Note:</strong> The current order will continue as scheduled until you approve the changes.</p>
-            </body>
-            </html>
-            """
         )
         
         # Send SMS notification
@@ -2914,7 +3127,7 @@ async def notify_order_locked(order):
         logging.error(f"Error in notify_order_locked: {str(e)}")
 
 async def send_notification(user_id: str, email: str, title: str, message: str, notif_type: str):
-    """Send both socket and email notifications"""
+    """Send socket and database notifications (email handled separately with proper templates)"""
     try:
         # Store notification in database
         notif = Notification(
@@ -2927,7 +3140,7 @@ async def send_notification(user_id: str, email: str, title: str, message: str, 
         doc['created_at'] = doc['created_at'].isoformat()
         await db.notifications.insert_one(doc)
         
-        # Send socket notification
+        # Send socket notification (real-time in-app notification)
         await sio.emit('notification', {
             'id': notif.id,
             'title': title,
@@ -2936,8 +3149,8 @@ async def send_notification(user_id: str, email: str, title: str, message: str, 
             'created_at': doc['created_at']
         }, room=user_id)
         
-        # Send email notification
-        send_email(email, title, f"<p>{message}</p>")
+        # Email notifications are now handled separately with proper templates
+        # Do not send generic emails here
     except Exception as e:
         logging.error(f"Error in send_notification: {str(e)}")
 
