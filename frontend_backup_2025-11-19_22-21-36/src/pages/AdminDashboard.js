@@ -2386,11 +2386,22 @@ function AdminDashboard() {
                                     Updating...
                                   </span>
                                 ) : (
-                                  <SelectValue />
+                                  <SelectValue placeholder="Select Status">
+                                    {order.status === "pending" ? "Pending" :
+                                     order.status === "confirmed" ? "Confirmed" :
+                                     order.status === "scheduled" ? "Scheduled" :
+                                     order.status === "processing" ? "Processing" :
+                                     order.status === "ready_for_pickup" ? "Ready for Pickup" :
+                                     order.status === "out_for_delivery" ? "Out for Delivery" :
+                                     order.status === "delivered" ? "Delivered" :
+                                     order.status === "cancelled" ? "Cancelled" :
+                                     order.status || "Select Status"}
+                                  </SelectValue>
                                 )}
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="pending">Pending</SelectItem>
+                                <SelectItem value="confirmed">Confirmed</SelectItem>
                                 <SelectItem value="scheduled">
                                   Scheduled
                                 </SelectItem>

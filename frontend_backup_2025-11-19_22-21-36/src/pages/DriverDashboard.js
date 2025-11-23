@@ -487,7 +487,13 @@ function DriverDashboard() {
                 <Label className="text-sm font-medium whitespace-nowrap">Date:</Label>
                 <Select value={driverDateFilter} onValueChange={setDriverDateFilter}>
                   <SelectTrigger className="w-[160px]">
-                    <SelectValue />
+                    <SelectValue placeholder="Select date range">
+                      {driverDateFilter === "all" && "All"}
+                      {driverDateFilter === "today" && "Today"}
+                      {driverDateFilter === "week" && "This Week"}
+                      {driverDateFilter === "month" && "This Month"}
+                      {driverDateFilter === "custom" && "Custom"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
@@ -683,7 +689,12 @@ function DriverDashboard() {
                               <Label>New Status</Label>
                               <Select value={statusUpdate} onValueChange={setStatusUpdate}>
                                 <SelectTrigger>
-                                  <SelectValue />
+                                  <SelectValue placeholder="Select new status">
+                                    {statusUpdate === "assigned" && "Assigned"}
+                                    {statusUpdate === "picked_up" && "Picked Up"}
+                                    {statusUpdate === "out_for_delivery" && "Out for Delivery"}
+                                    {statusUpdate === "delivered" && "Delivered"}
+                                  </SelectValue>
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="assigned">Assigned</SelectItem>
@@ -960,7 +971,12 @@ function DriverDashboard() {
                           <Label>New Status</Label>
                           <Select value={statusUpdate} onValueChange={setStatusUpdate}>
                             <SelectTrigger>
-                              <SelectValue />
+                              <SelectValue placeholder="Select new status">
+                                {statusUpdate === "assigned" && "Assigned"}
+                                {statusUpdate === "picked_up" && "Picked Up"}
+                                {statusUpdate === "out_for_delivery" && "Out for Delivery"}
+                                {statusUpdate === "delivered" && "Delivered"}
+                              </SelectValue>
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="assigned">Assigned</SelectItem>

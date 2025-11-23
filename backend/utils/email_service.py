@@ -299,40 +299,143 @@ def send_order_status_email(to_email: str, customer_name: str, order_number: str
                     </tr>
             """
             
-            if order_details.get('pickup_date'):
-                details_html += f"""
+            # Customer Information Section
+            if order_details.get('customer_name') or order_details.get('customer_email'):
+                details_html += """
                     <tr>
-                        <td style="padding: 8px 0; color: #666;">Pickup Date:</td>
-                        <td style="padding: 8px 0;">{order_details['pickup_date']}</td>
+                        <td colspan="2" style="padding: 15px 0 5px 0;">
+                            <h4 style="margin: 0; color: #333;">Customer Information</h4>
+                        </td>
                     </tr>
                 """
-            
-            if order_details.get('delivery_date'):
-                details_html += f"""
+                if order_details.get('customer_name'):
+                    details_html += f"""
                     <tr>
-                        <td style="padding: 8px 0; color: #666;">Delivery Date:</td>
-                        <td style="padding: 8px 0;">{order_details['delivery_date']}</td>
+                        <td style="padding: 5px 0; color: #666;">Name:</td>
+                        <td style="padding: 5px 0;">{order_details['customer_name']}</td>
+                    </tr>
+                    """
+                if order_details.get('customer_email'):
+                    details_html += f"""
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Email:</td>
+                        <td style="padding: 5px 0;">{order_details['customer_email']}</td>
+                    </tr>
+                    """
+                if order_details.get('customer_phone'):
+                    details_html += f"""
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Phone:</td>
+                        <td style="padding: 5px 0;">{order_details['customer_phone']}</td>
+                    </tr>
+                    """
+            
+            # Delivery Information
+            if order_details.get('pickup_address') or order_details.get('delivery_address'):
+                details_html += """
+                    <tr>
+                        <td colspan="2" style="padding: 15px 0 5px 0;">
+                            <h4 style="margin: 0; color: #333;">📍 Address Information</h4>
+                        </td>
+                    </tr>
+                """
+                if order_details.get('pickup_address'):
+                    details_html += f"""
+                    <tr>
+                        <td style="padding: 5px 0; color: #666; vertical-align: top;">Pickup Address:</td>
+                        <td style="padding: 5px 0;">{order_details['pickup_address']}</td>
+                    </tr>
+                    """
+                if order_details.get('delivery_address'):
+                    details_html += f"""
+                    <tr>
+                        <td style="padding: 5px 0; color: #666; vertical-align: top;">Delivery Address:</td>
+                        <td style="padding: 5px 0;">{order_details['delivery_address']}</td>
+                    </tr>
+                    """
+            
+            # Date Information
+            if order_details.get('pickup_date') or order_details.get('delivery_date'):
+                details_html += """
+                    <tr>
+                        <td colspan="2" style="padding: 15px 0 5px 0;">
+                            <h4 style="margin: 0; color: #333;">📅 Schedule</h4>
+                        </td>
+                    </tr>
+                """
+                if order_details.get('pickup_date'):
+                    details_html += f"""
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Pickup Date:</td>
+                        <td style="padding: 5px 0;">{order_details['pickup_date']}</td>
+                    </tr>
+                    """
+                if order_details.get('delivery_date'):
+                    details_html += f"""
+                    <tr>
+                        <td style="padding: 5px 0; color: #666;">Delivery Date:</td>
+                        <td style="padding: 5px 0; font-weight: bold;">{order_details['delivery_date']}</td>
+                    </tr>
+                    """
+            
+            # Items section
+            if order_details.get('items') and len(order_details['items']) > 0:
+                details_html += """
+                    <tr>
+                        <td colspan="2" style="padding: 15px 0 10px 0;">
+                            <h4 style="margin: 0; color: #333;">🧺 Order Items</h4>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <table style="width: 100%; border-collapse: collapse; margin: 10px 0;">
+                                <thead>
+                                    <tr style="background: #f9fafb;">
+                                        <th style="padding: 8px; text-align: left; border-bottom: 2px solid #ddd;">Item</th>
+                                        <th style="padding: 8px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #ddd;">Price</th>
+                                        <th style="padding: 8px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                """
+                for item in order_details['items']:
+                    item_total = item.get('price', 0) * item.get('quantity', 0)
+                    details_html += f"""
+                                    <tr>
+                                        <td style="padding: 6px 8px; border-bottom: 1px solid #e0e0e0;">{item.get('sku_name', 'Item')}</td>
+                                        <td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #e0e0e0;">{item.get('quantity', 0)}</td>
+                                        <td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #e0e0e0;">${item.get('price', 0):.2f}</td>
+                                        <td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #e0e0e0;">${item_total:.2f}</td>
+                                    </tr>
+                    """
+                details_html += """
+                                </tbody>
+                            </table>
+                        </td>
                     </tr>
                 """
             
             if order_details.get('total_amount'):
-                base_price = order_details['total_amount'] / 1.10
-                gst = order_details['total_amount'] - base_price
+                # total_amount is the base price, calculate GST as 10% of base
+                base_price = order_details['total_amount']
+                gst = base_price * 0.10
+                final_total = base_price + gst
                 details_html += f"""
                     <tr>
                         <td colspan="2" style="padding: 12px 0;">
-                            <div style="background: #f9fafb; padding: 12px; border-radius: 6px;">
-                                <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                            <div style="background: #f9fafb; padding: 15px; border-radius: 6px;">
+                                <div style="display: flex; justify-content: space-between; padding: 6px 0;">
                                     <span style="color: #666;">Base Price:</span>
                                     <span style="font-weight: 500;">${base_price:.2f}</span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                <div style="display: flex; justify-content: space-between; padding: 6px 0;">
                                     <span style="color: #666;">GST (10%):</span>
                                     <span style="font-weight: 500;">${gst:.2f}</span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; padding: 8px 0 4px 0; border-top: 1px solid #e0e0e0; margin-top: 4px;">
-                                    <span style="font-weight: bold; color: #333;">Total (Inc. GST):</span>
-                                    <span style="font-weight: bold; color: #40E0D0; font-size: 18px;">${order_details['total_amount']:.2f}</span>
+                                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 2px solid #e0e0e0; margin-top: 6px;">
+                                    <span style="font-weight: bold; color: #333; font-size: 16px;">Total (Inc. GST):</span>
+                                    <span style="font-weight: bold; color: #40E0D0; font-size: 20px;">${final_total:.2f}</span>
                                 </div>
                             </div>
                         </td>

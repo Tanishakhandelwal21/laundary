@@ -1609,9 +1609,10 @@ async def create_order(order: OrderBase, current_user: dict = Depends(require_ro
     await db.orders.insert_one(doc)
     
     # If recurring order, create 6 months worth of orders upfront
-    if order.is_recurring and order.recurrence_pattern:
-        await create_recurring_orders_for_6_months(doc)
-        logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
+    # DISABLED: Now creating one order at a time after delivery instead
+    # if order.is_recurring and order.recurrence_pattern:
+    #     await create_recurring_orders_for_6_months(doc)
+    #     logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
     
     # Send notifications to customer, owner, and admin
     order_type = "recurring order" if order.is_recurring else "order"
@@ -1716,9 +1717,10 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     await db.orders.insert_one(doc)
     
     # If recurring order, create 6 months worth of orders upfront
-    if order.is_recurring and order.recurrence_pattern:
-        await create_recurring_orders_for_6_months(doc)
-        logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
+    # DISABLED: Now creating one order at a time after delivery instead
+    # if order.is_recurring and order.recurrence_pattern:
+    #     await create_recurring_orders_for_6_months(doc)
+    #     logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
     
     # Prepare detailed order info
     base_price = total_amount  # total_amount is already the base price (sum of item prices)
