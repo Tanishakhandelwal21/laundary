@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
+import pytz
 import jwt
 from passlib.context import CryptContext
 import smtplib
@@ -38,6 +39,21 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production'
 ALGORITHM = "HS256"
 # Default business pickup address (used as fallback if not set in DB settings)
 BUSINESS_PICKUP_ADDRESS = os.environ.get('BUSINESS_PICKUP_ADDRESS', '123 Main Street, Sydney NSW 2000, Australia')
+
+# Timezone settings - Australian Eastern Standard Time
+AEST = pytz.timezone('Australia/Sydney')  # Handles both AEST and AEDT automatically
+
+def get_aest_now():
+    """Get current datetime in AEST timezone"""
+    return datetime.now(AEST)
+
+def utc_to_aest(utc_dt):
+    """Convert UTC datetime to AEST"""
+    if isinstance(utc_dt, str):
+        utc_dt = datetime.fromisoformat(utc_dt.replace('Z', '+00:00'))
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+    return utc_dt.astimezone(AEST)
 
 # Create the main app
 app = FastAPI()
