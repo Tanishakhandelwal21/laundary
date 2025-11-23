@@ -1342,9 +1342,15 @@ async def get_drivers(current_user: dict = Depends(require_role(["owner", "admin
 
 @api_router.get("/driver/orders")
 async def get_driver_orders(current_user: dict = Depends(require_role(["driver"]))):
-    """Get orders assigned to the current driver"""
+    """Get orders assigned to the current driver - excludes already delivered orders"""
     driver_id = current_user['id']
-    orders = await db.orders.find({"driver_id": driver_id}, {"_id": 0}).to_list(1000)
+    # Only fetch orders that are NOT in 'delivered' status - drivers should see active/pending deliveries
+    # For recurring orders, they'll see the current/next delivery, not past history
+    orders = await db.orders.find({
+        "driver_id": driver_id,
+        "status": {"$ne": "delivered"}  # Exclude delivered orders
+    }, {"_id": 0}).to_list(1000)
+    
     for order in orders:
         order['created_at'] = datetime.fromisoformat(order['created_at']) if isinstance(order['created_at'], str) else order['created_at']
         order['updated_at'] = datetime.fromisoformat(order['updated_at']) if isinstance(order['updated_at'], str) else order['updated_at']
