@@ -63,20 +63,20 @@ function CustomerDashboard() {
   const [approvingModificationId, setApprovingModificationId] = useState(null);
   const [rejectingModificationId, setRejectingModificationId] = useState(null);
 
-  // Calculate GST (10%)
-  const calculateGST = (amount) => {
-    // amount is the base price (ex-GST) stored in total_amount
-    const basePrice = amount;
-    const gst = amount * 0.1;
-    const total = amount + gst;
-    return { basePrice, gst, total };
+  // Get pricing values - use stored values from backend
+  const getPricing = (order) => {
+    return {
+      basePrice: order.total_amount || 0,
+      gst: order.gst_amount || (order.total_amount * 0.1),
+      total: order.total_with_gst || (order.total_amount * 1.1)
+    };
   };
 
   const generateInvoice = (order) => {
     const invoiceDate = new Date(order.delivery_date).toLocaleDateString(
       "en-AU"
     );
-    const { basePrice, gst, total } = calculateGST(order.total_amount);
+    const { basePrice, gst, total } = getPricing(order);
 
     let invoiceHTML = `
       <!DOCTYPE html>
@@ -966,7 +966,9 @@ function CustomerDashboard() {
     try {
       await axios.put(`${API}/orders/${orderId}/approve-modification`);
       toast.success("Modifications approved successfully!");
-      fetchData();
+      // Add a small delay to ensure backend has processed
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await fetchData();
     } catch (error) {
       console.error("Failed to approve modification:", error);
       toast.error(
@@ -990,7 +992,9 @@ function CustomerDashboard() {
     try {
       await axios.put(`${API}/orders/${orderId}/reject-modification`);
       toast.success("Modifications rejected successfully!");
-      fetchData();
+      // Add a small delay to ensure backend has processed
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await fetchData();
     } catch (error) {
       console.error("Failed to reject modification:", error);
       toast.error(
@@ -1869,6 +1873,60 @@ function CustomerDashboard() {
                                               }
                                             </p>
                                           )}
+
+                                          {/* Calculate and show new total for pending modifications */}
+                                          {(order.pending_modifications.items || order.pending_modifications.total_amount) && (
+                                            <div className="mt-3">
+                                              <p className="text-xs text-gray-600 font-medium mb-2">
+                                                Updated Price:
+                                              </p>
+                                              {(() => {
+                                                // Use total_amount from backend if available, otherwise calculate from items
+                                                const newTotal = order.pending_modifications.total_amount 
+                                                  ? order.pending_modifications.total_amount
+                                                  : order.pending_modifications.items.reduce(
+                                                      (sum, item) =>
+                                                        sum +
+                                                        item.price *
+                                                          item.quantity,
+                                                      0
+                                                    );
+                                                const gst = newTotal * 0.1;
+                                                const finalTotal =
+                                                  newTotal + gst;
+                                                return (
+                                                  <div className="text-sm space-y-1 bg-gray-50 p-2 rounded">
+                                                    <div className="flex justify-between">
+                                                      <span className="text-gray-700">
+                                                        Base:
+                                                      </span>
+                                                      <span className="font-semibold text-gray-900">
+                                                        ${newTotal.toFixed(2)}
+                                                      </span>
+                                                    </div>
+                                                    <div className="flex justify-between text-xs text-gray-600">
+                                                      <span>GST (10%):</span>
+                                                      <span>
+                                                        $
+                                                        {gst.toFixed(2)}
+                                                      </span>
+                                                    </div>
+                                                    <div className="flex justify-between border-t pt-1 font-semibold">
+                                                      <span className="text-teal-700">
+                                                        Total:
+                                                      </span>
+                                                      <span className="text-teal-600 text-lg">
+                                                        $
+                                                        {finalTotal.toFixed(
+                                                          2
+                                                        )}
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })()}
+                                            </div>
+                                          )}
                                         </div>
 
                                         {/* Approve/Reject Buttons */}
@@ -2029,24 +2087,20 @@ function CustomerDashboard() {
                                     <span>Base Amount:</span>
                                     <span>
                                       $
-                                      {calculateGST(
-                                        order.total_amount
-                                      ).basePrice.toFixed(2)}
+                                      {order.total_amount?.toFixed(2)}
                                     </span>
                                   </div>
                                   <div className="flex items-center justify-between text-xs text-gray-600">
                                     <span>GST (10%):</span>
                                     <span>
                                       $
-                                      {calculateGST(
-                                        order.total_amount
-                                      ).gst.toFixed(2)}
+                                      {(order.gst_amount || order.total_amount * 0.1).toFixed(2)}
                                     </span>
                                   </div>
                                   <div className="flex items-baseline gap-2 pt-1 border-t">
                                     <DollarSign className="w-4 h-4 text-teal-600" />
                                     <span className="text-xl font-bold text-teal-600">
-                                      ${(order.total_amount * 1.1).toFixed(2)}
+                                      ${(order.total_with_gst || order.total_amount * 1.1).toFixed(2)}
                                     </span>
                                   </div>
                                   <div className="text-xs text-gray-500 text-center mt-1">
@@ -2765,18 +2819,14 @@ function CustomerDashboard() {
                                   </p>
                                   <p className="font-semibold text-gray-900">
                                     $
-                                    {calculateGST(
-                                      order.total_amount
-                                    ).basePrice.toFixed(2)}
+                                    {order.total_amount?.toFixed(2)}
                                   </p>
                                   <p className="text-xs text-gray-500">
                                     GST: $
-                                    {calculateGST(
-                                      order.total_amount
-                                    ).gst.toFixed(2)}
+                                    {(order.gst_amount || order.total_amount * 0.1).toFixed(2)}
                                   </p>
                                   <p className="text-xs font-bold text-teal-600">
-                                    Total: ${order.total_amount?.toFixed(2)}
+                                    Total: ${(order.total_with_gst || order.total_amount * 1.1).toFixed(2)}
                                   </p>
                                 </div>
                               </div>

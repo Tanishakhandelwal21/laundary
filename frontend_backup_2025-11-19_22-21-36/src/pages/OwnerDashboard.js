@@ -1568,8 +1568,15 @@ function OwnerDashboard() {
         items: validItems,
       };
 
-      await axios.put(`${API}/orders/${editingOrder.id}`, updateData);
-      alert("Order updated successfully");
+      // Use propose-modification endpoint for recurring orders
+      if (editingOrder.is_recurring) {
+        await axios.put(`${API}/orders/${editingOrder.id}/propose-modification`, updateData);
+        alert("Modification proposed successfully. Waiting for customer approval.");
+      } else {
+        await axios.put(`${API}/orders/${editingOrder.id}`, updateData);
+        alert("Order updated successfully");
+      }
+      
       setShowOrderDialog(false);
       setEditingOrder(null);
       setOrderForm({

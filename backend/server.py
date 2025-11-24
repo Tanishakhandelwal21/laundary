@@ -376,10 +376,10 @@ async def auto_create_next_recurring_order(order: dict):
         )
         
         # Send email notification with full details
-        # total_amount is the base price, GST is 10% of base, final total = base + GST
-        base_price = new_order['total_amount']
-        gst = base_price * 0.10
-        final_total = base_price + gst
+        # Use stored pricing values from the order
+        base_price = new_order.get('total_amount', 0)
+        gst = new_order.get('gst_amount', base_price * 0.10)
+        final_total = new_order.get('total_with_gst', base_price + gst)
         
         # Build items list HTML
         items_html = ""
@@ -694,7 +694,9 @@ class Order(OrderBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     order_number: str
     status: str = "pending"
-    total_amount: float
+    total_amount: float  # Base amount (ex-GST)
+    gst_amount: float = 0.0  # GST amount (10% of total_amount)
+    total_with_gst: float = 0.0  # Total including GST
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
@@ -1600,10 +1602,14 @@ async def create_order(order: OrderBase, current_user: dict = Depends(require_ro
     
     # Calculate total
     total_amount = sum(item.price * item.quantity for item in order.items)
+    gst_amount = total_amount * 0.10
+    total_with_gst = total_amount + gst_amount
     
     order_dict = order.model_dump()
     order_dict['order_number'] = order_number
     order_dict['total_amount'] = total_amount
+    order_dict['gst_amount'] = gst_amount
+    order_dict['total_with_gst'] = total_with_gst
     order_dict['created_by'] = current_user['id']
     order_dict['is_locked'] = False
     
@@ -1704,6 +1710,8 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     
     # Calculate total
     total_amount = sum(item.price * item.quantity for item in order.items)
+    gst_amount = total_amount * 0.10
+    total_with_gst = total_amount + gst_amount
     
     order_dict = order.model_dump()
     order_dict['customer_id'] = customer['id']
@@ -1711,6 +1719,8 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     order_dict['customer_email'] = customer['email']
     order_dict['order_number'] = order_number
     order_dict['total_amount'] = total_amount
+    order_dict['gst_amount'] = gst_amount
+    order_dict['total_with_gst'] = total_with_gst
     order_dict['created_by'] = current_user['id']
     order_dict['is_locked'] = False
     
@@ -1748,10 +1758,10 @@ async def create_customer_order(order: CustomerOrderCreate, current_user: dict =
     #     await create_recurring_orders_for_6_months(doc)
     #     logging.info(f"Created 6 months of recurring orders for parent order {order_number}")
     
-    # Prepare detailed order info
-    base_price = total_amount  # total_amount is already the base price (sum of item prices)
-    gst = total_amount * 0.10
-    total_inc_gst = total_amount + gst
+    # Prepare detailed order info - use calculated pricing values
+    base_price = total_amount
+    gst = gst_amount
+    total_inc_gst = total_with_gst
     items_list = "\n".join([f"    - {item.sku_name}: {item.quantity} x ${item.price:.2f} = ${item.quantity * item.price:.2f}" for item in order.items])
     order_details = f"""
     Order Number: {order_number}
@@ -2002,10 +2012,10 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
     
     # Send in-app notifications only for status changes to 'delivered'
     if status_changed and new_status == 'delivered':
-        # Prepare order details for notifications
-        base_price = updated_order.get('total_amount', 0)  # total_amount is the base price
-        gst = base_price * 0.10
-        total_inc_gst = base_price + gst
+        # Prepare order details for notifications - use stored pricing values
+        base_price = updated_order.get('total_amount', 0)
+        gst = updated_order.get('gst_amount', base_price * 0.10)
+        total_inc_gst = updated_order.get('total_with_gst', base_price + gst)
         order_details = f"""
     Order Number: {order_doc['order_number']}
     Status: {updated_order.get('status', 'N/A')}
@@ -2427,6 +2437,15 @@ async def propose_order_modification(
     if not order.get('is_recurring'):
         raise HTTPException(status_code=400, detail="Only recurring orders require modification approval")
     
+    # If items are being modified but total_amount is not explicitly provided, calculate it
+    if 'items' in modifications and 'total_amount' not in modifications:
+        total = sum(item.get('price', 0) * item.get('quantity', 1) for item in modifications['items'])
+        gst = total * 0.10
+        total_with_gst = total + gst
+        modifications['total_amount'] = total
+        modifications['gst_amount'] = gst
+        modifications['total_with_gst'] = total_with_gst
+    
     # Store the proposed modifications
     update_data = {
         "pending_modifications": modifications,
@@ -2492,10 +2511,22 @@ async def approve_order_modification(
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
-    # Recalculate total if items changed
+    # Always recalculate total from items if they exist in modifications
     if 'items' in modifications:
-        total = sum(item['price'] * item['quantity'] for item in modifications['items'])
+        total = sum(item.get('price', 0) * item.get('quantity', 1) for item in modifications['items'])
+        gst = total * 0.10
+        total_with_gst = total + gst
         update_data['total_amount'] = total
+        update_data['gst_amount'] = gst
+        update_data['total_with_gst'] = total_with_gst
+    elif 'total_amount' in modifications:
+        # If total_amount is explicitly in modifications, use it
+        total = modifications['total_amount']
+        gst = total * 0.10
+        total_with_gst = total + gst
+        update_data['total_amount'] = total
+        update_data['gst_amount'] = gst
+        update_data['total_with_gst'] = total_with_gst
     
     await db.orders.update_one({"id": order_id}, {"$set": update_data})
     
@@ -2720,6 +2751,51 @@ async def create_delivery(delivery: DeliveryBase, current_user: dict = Depends(r
     doc['updated_at'] = doc['updated_at'].isoformat()
     await db.deliveries.insert_one(doc)
     return delivery_obj
+
+@api_router.put("/orders/{order_id}/recalculate-total")
+async def recalculate_order_total(order_id: str, current_user: dict = Depends(require_role(["owner", "admin"]))):
+    """Recalculate order total from items - admin/owner only"""
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    items = order.get('items', [])
+    if not items:
+        raise HTTPException(status_code=400, detail="Order has no items")
+    
+    # Calculate total from items
+    calculated_total = sum(item.get('price', 0) * item.get('quantity', 1) for item in items)
+    calculated_gst = calculated_total * 0.10
+    calculated_total_with_gst = calculated_total + calculated_gst
+    old_total = order.get('total_amount', 0)
+    
+    if calculated_total == old_total:
+        return {
+            "message": "Total is already correct", 
+            "total_amount": calculated_total,
+            "gst_amount": calculated_gst,
+            "total_with_gst": calculated_total_with_gst
+        }
+    
+    # Update the order
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "total_amount": calculated_total,
+            "gst_amount": calculated_gst,
+            "total_with_gst": calculated_total_with_gst,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    return {
+        "message": "Total recalculated successfully",
+        "old_total": old_total,
+        "new_total": calculated_total,
+        "gst_amount": calculated_gst,
+        "total_with_gst": calculated_total_with_gst,
+        "difference": calculated_total - old_total
+    }
 
 @api_router.get("/deliveries", response_model=List[Delivery])
 async def get_deliveries(current_user: dict = Depends(require_role(["owner", "admin"]))):
