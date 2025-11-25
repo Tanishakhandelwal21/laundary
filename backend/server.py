@@ -2114,6 +2114,23 @@ async def cancel_order(order_id: str, current_user: dict = Depends(get_current_u
     
     return {"message": "Order cancelled successfully"}
 
+@api_router.delete("/orders/{order_id}/permanent")
+async def permanently_delete_order(order_id: str, current_user: dict = Depends(require_role(["owner", "admin"]))):
+    """Permanently delete an order from database - only owner/admin"""
+    order_doc = await db.orders.find_one({"id": order_id})
+    if not order_doc:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    order_number = order_doc.get('order_number')
+    
+    # Actually delete from database
+    result = await db.orders.delete_one({"id": order_id})
+    
+    if result.deleted_count > 0:
+        return {"message": f"Order {order_number} permanently deleted", "deleted": True}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to delete order")
+
 @api_router.put("/orders/{order_id}/lock")
 async def lock_order(
     order_id: str,
