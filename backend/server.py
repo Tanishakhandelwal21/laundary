@@ -2117,14 +2117,16 @@ async def cancel_order(order_id: str, current_user: dict = Depends(get_current_u
 @api_router.delete("/orders/{order_id}/permanent")
 async def permanently_delete_order(order_id: str, current_user: dict = Depends(require_role(["owner", "admin"]))):
     """Permanently delete an order from database - only owner/admin"""
-    order_doc = await db.orders.find_one({"id": order_id})
+    # Try to find by id first, then by order_number
+    order_doc = await db.orders.find_one({"$or": [{"id": order_id}, {"order_number": order_id}]})
     if not order_doc:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
     
     order_number = order_doc.get('order_number')
+    actual_id = order_doc.get('id')
     
-    # Actually delete from database
-    result = await db.orders.delete_one({"id": order_id})
+    # Actually delete from database using the actual id
+    result = await db.orders.delete_one({"id": actual_id})
     
     if result.deleted_count > 0:
         return {"message": f"Order {order_number} permanently deleted", "deleted": True}
