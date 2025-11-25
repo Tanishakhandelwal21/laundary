@@ -1920,6 +1920,15 @@ async def update_order(order_id: str, update: OrderUpdate, current_user: dict = 
     update_data = {k: v for k, v in update.model_dump().items() if v is not None}
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
     
+    # Recalculate pricing if items are modified (owner/admin changes)
+    if 'items' in update_data and update_data['items']:
+        total = sum(item.get('price', 0) * item.get('quantity', 1) for item in update_data['items'])
+        gst = total * 0.10
+        total_with_gst = total + gst
+        update_data['total_amount'] = total
+        update_data['gst_amount'] = gst
+        update_data['total_with_gst'] = total_with_gst
+    
     # Check if status is being changed
     status_changed = 'status' in update_data and update_data['status'] != order_doc.get('status')
     new_status = update_data.get('status')
