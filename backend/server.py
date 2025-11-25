@@ -2835,6 +2835,28 @@ async def recalculate_order_total(order_id: str, current_user: dict = Depends(re
         "difference": calculated_total - old_total
     }
 
+@api_router.put("/orders/{order_id}/clear-pending-approval")
+async def clear_pending_approval(order_id: str, current_user: dict = Depends(require_role(["owner", "admin"]))):
+    """Clear old pending_approval status and pending_modifications - admin/owner only"""
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    # Clear old workflow fields
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$unset": {
+            "pending_modifications": "",
+            "modification_requested_at": ""
+        },
+        "$set": {
+            "modification_status": None,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    return {"message": "Pending approval cleared successfully", "order_id": order_id}
+
 @api_router.get("/deliveries", response_model=List[Delivery])
 async def get_deliveries(current_user: dict = Depends(require_role(["owner", "admin"]))):
     deliveries = await db.deliveries.find({}, {"_id": 0}).to_list(1000)
