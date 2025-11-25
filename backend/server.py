@@ -2064,7 +2064,17 @@ async def cancel_order(order_id: str, current_user: dict = Depends(get_current_u
     if current_user['role'] == 'customer' and order_doc['customer_id'] != current_user['id']:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    await db.orders.update_one({"id": order_id}, {"$set": {"status": "cancelled"}})
+    # Clear any old pending modifications before cancelling
+    await db.orders.update_one(
+        {"id": order_id}, 
+        {
+            "$set": {"status": "cancelled"},
+            "$unset": {
+                "pending_modifications": "",
+                "modification_requested_at": ""
+            }
+        }
+    )
     
     # Get customer details
     customer = await db.users.find_one({"id": order_doc['customer_id']})
@@ -2768,7 +2778,17 @@ async def cancel_recurring_order(order_id: str, current_user: dict = Depends(get
     if current_user['role'] == 'customer' and order_doc['customer_id'] != current_user['id']:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    await db.orders.update_one({"id": order_id}, {"$set": {"status": "cancelled", "is_recurring": False}})
+    # Clear any old pending modifications before cancelling
+    await db.orders.update_one(
+        {"id": order_id}, 
+        {
+            "$set": {"status": "cancelled", "is_recurring": False},
+            "$unset": {
+                "pending_modifications": "",
+                "modification_requested_at": ""
+            }
+        }
+    )
     
     await send_notification(
         user_id=order_doc['customer_id'],
