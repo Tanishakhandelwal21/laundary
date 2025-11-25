@@ -668,27 +668,18 @@ function OwnerDashboard() {
 
     setProcessingEditRequest(true);
     try {
-      const payload = {
-        action: editRequestAction,
-        rejection_reason:
-          editRequestAction === "reject" ? rejectionReason : undefined,
-        admin_notes: adminNotes || undefined,
-        modified_data:
-          editRequestAction === "modify" ? editRequestForm : undefined,
-      };
-
-      await axios.put(
-        `${API}/orders/${selectedEditRequest.id}/review-edit-request`,
-        payload
-      );
-
-      toast.success(
-        editRequestAction === "approve"
-          ? "Edit request approved"
-          : editRequestAction === "modify"
-          ? "Edit request modified and approved"
-          : "Edit request rejected"
-      );
+      if (editRequestAction === "approve") {
+        await axios.put(
+          `${API}/orders/${selectedEditRequest.id}/approve-modification`
+        );
+        toast.success("Edit request approved successfully");
+      } else if (editRequestAction === "reject") {
+        await axios.put(
+          `${API}/orders/${selectedEditRequest.id}/reject-modification`,
+          { rejection_reason: rejectionReason }
+        );
+        toast.success("Edit request rejected");
+      }
 
       setShowEditRequestDialog(false);
       setSelectedEditRequest(null);
@@ -1568,10 +1559,10 @@ function OwnerDashboard() {
         items: validItems,
       };
 
-      // Use propose-modification endpoint for recurring orders
+      // Owner can directly modify orders without approval
       if (editingOrder.is_recurring) {
         await axios.put(`${API}/orders/${editingOrder.id}/propose-modification`, updateData);
-        alert("Modification proposed successfully. Waiting for customer approval.");
+        alert("Order updated successfully");
       } else {
         await axios.put(`${API}/orders/${editingOrder.id}`, updateData);
         alert("Order updated successfully");

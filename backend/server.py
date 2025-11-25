@@ -1855,7 +1855,7 @@ async def get_orders(current_user: dict = Depends(get_current_user)):
 async def get_pending_edit_requests(current_user: dict = Depends(require_role(["owner", "admin"]))):
     """Get all orders with pending customer edit requests"""
     orders = await db.orders.find(
-        {"modification_status": "pending_customer_edit"},
+        {"modification_status": "pending_owner_approval"},
         {"_id": 0}
     ).to_list(1000)
     
@@ -2427,47 +2427,86 @@ async def review_order_edit_request(
 async def propose_order_modification(
     order_id: str,
     modifications: dict = Body(...),
-    current_user: dict = Depends(require_role(["owner", "admin"]))
+    current_user: dict = Depends(get_current_user)
 ):
-    """Propose modifications to a recurring order that require customer approval"""
+    """
+    Owner/Admin: Directly modifies the order (no approval needed)
+    Customer: Sends modification request to owner for approval
+    """
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
-    if not order.get('is_recurring'):
-        raise HTTPException(status_code=400, detail="Only recurring orders require modification approval")
+    # If owner/admin is making changes - apply directly without approval
+    if current_user['role'] in ['owner', 'admin']:
+        # Calculate pricing if items are modified
+        if 'items' in modifications and 'total_amount' not in modifications:
+            total = sum(item.get('price', 0) * item.get('quantity', 1) for item in modifications['items'])
+            gst = total * 0.10
+            total_with_gst = total + gst
+            modifications['total_amount'] = total
+            modifications['gst_amount'] = gst
+            modifications['total_with_gst'] = total_with_gst
+        
+        # Apply changes directly
+        update_data = {
+            **modifications,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.orders.update_one({"id": order_id}, {"$set": update_data})
+        
+        # Notify customer of the changes
+        customer = await db.users.find_one({"id": order['customer_id']})
+        if customer:
+            await create_notification(
+                order['customer_id'],
+                "Order Updated",
+                f"Your order {order['order_number']} has been updated by the owner.",
+                "order"
+            )
+        
+        return {"message": "Order updated successfully", "order_id": order_id}
     
-    # If items are being modified but total_amount is not explicitly provided, calculate it
-    if 'items' in modifications and 'total_amount' not in modifications:
-        total = sum(item.get('price', 0) * item.get('quantity', 1) for item in modifications['items'])
-        gst = total * 0.10
-        total_with_gst = total + gst
-        modifications['total_amount'] = total
-        modifications['gst_amount'] = gst
-        modifications['total_with_gst'] = total_with_gst
-    
-    # Store the proposed modifications
-    update_data = {
-        "pending_modifications": modifications,
-        "modification_status": "pending_approval",
-        "modified_by": current_user['id'],
-        "modification_requested_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }
-    
-    await db.orders.update_one({"id": order_id}, {"$set": update_data})
-    
-    # Get customer details
-    customer = await db.users.find_one({"id": order['customer_id']})
-    
-    # Send notification to customer
-    if customer:
-        await create_notification(
-            order['customer_id'],
-            "Order Modification Pending Approval",
-            f"Changes have been proposed for your recurring order {order['order_number']}. Please review and approve or reject the changes.",
-            "order"
-        )
+    # If customer is making changes - send request to owner for approval
+    elif current_user['role'] == 'customer':
+        # Check if customer owns this order
+        if order['customer_id'] != current_user['id']:
+            raise HTTPException(status_code=403, detail="Not authorized")
+        
+        # Check if modification is allowed (before 11:59 PM on day before delivery)
+        delivery_date = datetime.fromisoformat(order['delivery_date'].replace('Z', '+00:00'))
+        cutoff_time = delivery_date.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
+        current_time = datetime.now(timezone.utc)
+        
+        if current_time >= cutoff_time:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order modifications are locked. Changes must be made before 11:59 PM on {(delivery_date - timedelta(days=1)).strftime('%B %d, %Y')}"
+            )
+        
+        # Store customer's modification request
+        update_data = {
+            "pending_modifications": modifications,
+            "modification_status": "pending_owner_approval",
+            "modified_by": current_user['id'],
+            "modification_requested_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.orders.update_one({"id": order_id}, {"$set": update_data})
+        
+        # Notify owner/admin
+        owners = await db.users.find({"role": {"$in": ["owner", "admin"]}}).to_list(100)
+        for owner in owners:
+            await create_notification(
+                owner['id'],
+                "Customer Modification Request",
+                f"Customer has requested changes to order {order['order_number']}. Please review and approve or reject.",
+                "order"
+            )
+        
+        return {"message": "Modification request sent to owner for approval", "order_id": order_id}
         
         # Send SMS notification
         if customer.get('phone'):
@@ -2490,19 +2529,21 @@ async def approve_order_modification(
     order_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Customer approves proposed modifications to their recurring order"""
+    """
+    Owner/Admin: Approves customer's modification request
+    """
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
-    # Only the customer can approve
-    if order['customer_id'] != current_user['id']:
-        raise HTTPException(status_code=403, detail="Only the customer can approve modifications")
+    # Only owner/admin can approve customer requests
+    if current_user['role'] not in ['owner', 'admin']:
+        raise HTTPException(status_code=403, detail="Only owner/admin can approve customer modification requests")
     
-    if order.get('modification_status') != 'pending_approval':
-        raise HTTPException(status_code=400, detail="No pending modifications to approve")
+    if order.get('modification_status') != 'pending_owner_approval':
+        raise HTTPException(status_code=400, detail="No pending customer modification requests to approve")
     
-    # Apply the pending modifications
+    # Apply the customer's requested modifications
     modifications = order.get('pending_modifications', {})
     update_data = {
         **modifications,
@@ -2544,12 +2585,12 @@ async def approve_order_modification(
     # Send confirmation to customer
     await create_notification(
         order['customer_id'],
-        "Modification Approved",
-        f"You have approved the changes to your recurring order {order['order_number']}",
+        "Modification Request Approved",
+        f"Your modification request for order {order['order_number']} has been approved by the owner.",
         "order"
     )
     
-    return {"message": "Modifications approved and applied successfully"}
+    return {"message": "Customer modification request approved and applied successfully"}
 
 @api_router.put("/orders/{order_id}/reject-modification")
 async def reject_order_modification(
@@ -2557,17 +2598,17 @@ async def reject_order_modification(
     reason: Optional[str] = Body(None, embed=True),
     current_user: dict = Depends(get_current_user)
 ):
-    """Customer rejects proposed modifications to their recurring order"""
+    """Owner/Admin rejects customer's modification request"""
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
-    # Only the customer can reject
-    if order['customer_id'] != current_user['id']:
-        raise HTTPException(status_code=403, detail="Only the customer can reject modifications")
+    # Only owner/admin can reject customer requests
+    if current_user['role'] not in ['owner', 'admin']:
+        raise HTTPException(status_code=403, detail="Only owner/admin can reject customer modification requests")
     
-    if order.get('modification_status') != 'pending_approval':
-        raise HTTPException(status_code=400, detail="No pending modifications to reject")
+    if order.get('modification_status') != 'pending_owner_approval':
+        raise HTTPException(status_code=400, detail="No pending customer modification requests to reject")
     
     # Clear the pending modifications
     update_data = {
@@ -2578,16 +2619,13 @@ async def reject_order_modification(
     
     await db.orders.update_one({"id": order_id}, {"$set": update_data})
     
-    # Notify the admin/owner who proposed the change
-    if order.get('modified_by'):
-        modifier = await db.users.find_one({"id": order['modified_by']})
-        if modifier:
-            await create_notification(
-                order['modified_by'],
-                "Modification Rejected",
-                f"Customer has rejected your proposed changes to order {order['order_number']}{'. Reason: ' + reason if reason else ''}",
-                "order"
-            )
+    # Notify the customer
+    await create_notification(
+        order['customer_id'],
+        "Modification Request Rejected",
+        f"Your modification request for order {order['order_number']} has been rejected by the owner{'. Reason: ' + reason if reason else ''}",
+        "order"
+    )
     
     # Send confirmation to customer
     await create_notification(

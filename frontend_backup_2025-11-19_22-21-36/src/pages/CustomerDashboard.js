@@ -857,14 +857,22 @@ function CustomerDashboard() {
         return;
       }
 
-      // All customer edits now require approval (recurring and regular)
-      await axios.post(`${API}/orders/${editingOrderId}/request-edit`, {
-        ...formData,
-        reason:
-          formData.special_instructions ||
-          "Customer requested changes to order",
-      });
-      toast.success("Edit request submitted! Awaiting admin approval.");
+      // Customer edits require owner approval
+      // Check if edit is allowed (must be before 11:59 PM the day before delivery)
+      const deliveryDate = new Date(formData.delivery_date);
+      const cutoffTime = new Date(deliveryDate);
+      cutoffTime.setDate(cutoffTime.getDate() - 1);
+      cutoffTime.setHours(23, 59, 59, 999);
+      const now = new Date();
+
+      if (now > cutoffTime) {
+        toast.error(`Cannot edit order - deadline was ${cutoffTime.toLocaleString()}. Please contact support for urgent changes.`);
+        setSubmitting(false);
+        return;
+      }
+
+      await axios.put(`${API}/orders/${editingOrderId}/propose-modification`, formData);
+      toast.success("Edit request submitted to owner for approval!");
 
       setShowOrderDialog(false);
       setEditingOrderId(null);
@@ -2019,10 +2027,10 @@ function CustomerDashboard() {
                                     </span>
                                   )}
                                   {order.modification_status ===
-                                    "pending_customer_edit" && (
+                                    "pending_owner_approval" && (
                                     <span className="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800 flex items-center gap-1">
                                       <Clock className="w-3 h-3" />
-                                      Edit Pending
+                                      Pending Owner Approval
                                     </span>
                                   )}
                                   {order.modification_status === "approved" && (
@@ -2192,18 +2200,18 @@ function CustomerDashboard() {
                                       className="w-full"
                                       disabled={
                                         order.modification_status ===
-                                        "pending_customer_edit"
+                                        "pending_owner_approval"
                                       }
                                       title={
                                         order.modification_status ===
-                                        "pending_customer_edit"
-                                          ? "Edit request pending approval"
+                                        "pending_owner_approval"
+                                          ? "Edit request pending owner approval"
                                           : "Edit order"
                                       }
                                     >
                                       <Edit className="w-4 h-4 mr-1" />
                                       {order.modification_status ===
-                                      "pending_customer_edit"
+                                      "pending_owner_approval"
                                         ? "Pending"
                                         : "Edit"}
                                     </Button>
