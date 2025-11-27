@@ -2322,8 +2322,8 @@ async def review_order_edit_request(
     if not order_doc:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Must have a pending customer edit request
-    if order_doc.get('modification_status') != 'pending_customer_edit':
+    # Must have a pending customer edit request (accept both status values for compatibility)
+    if order_doc.get('modification_status') not in ['pending_customer_edit', 'pending_owner_approval']:
         raise HTTPException(status_code=400, detail="No pending edit request found for this order")
     
     customer = await db.users.find_one({"id": order_doc['customer_id']})
