@@ -317,32 +317,31 @@ function AdminDashboard() {
   ]);
   const [filteredSkus, setFilteredSkus] = useState([]);
 
-  // Helper function to get default delivery date (tomorrow at 10 AM)
+  // Helper function to get default delivery date (tomorrow)
   const getDefaultDeliveryDate = () => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(10, 0, 0, 0);
-    return tomorrow.toISOString().slice(0, 16);
+    return tomorrow.toISOString().slice(0, 10);
   };
 
-  // Helper function to format date for datetime-local input
+  // Helper function to format date for date input
   const formatDateForInput = (dateString) => {
     if (!dateString) return getDefaultDeliveryDate();
     
-    // If it's already in datetime-local format (YYYY-MM-DDTHH:MM), return as is
-    if (dateString.includes('T') && dateString.length >= 16) {
-      return dateString.slice(0, 16);
+    // If it's already in date format (YYYY-MM-DD), return as is
+    if (dateString.length === 10 && !dateString.includes('T')) {
+      return dateString;
     }
     
-    // If it's just a date (YYYY-MM-DD), add default time (10:00 AM)
-    if (dateString.length === 10) {
-      return `${dateString}T10:00`;
+    // If it has time component (YYYY-MM-DDTHH:MM), extract just the date
+    if (dateString.includes('T')) {
+      return dateString.slice(0, 10);
     }
     
     // Try parsing as ISO string and format
     try {
       const date = new Date(dateString);
-      return date.toISOString().slice(0, 16);
+      return date.toISOString().slice(0, 10);
     } catch {
       return getDefaultDeliveryDate();
     }
@@ -1759,7 +1758,7 @@ function AdminDashboard() {
                     <div>
                       <Label>Delivery Date</Label>
                       <Input
-                        type="datetime-local"
+                        type="date"
                         value={orderForm.delivery_date}
                         onChange={(e) =>
                           setOrderForm({
