@@ -325,6 +325,29 @@ function AdminDashboard() {
     return tomorrow.toISOString().slice(0, 16);
   };
 
+  // Helper function to format date for datetime-local input
+  const formatDateForInput = (dateString) => {
+    if (!dateString) return getDefaultDeliveryDate();
+    
+    // If it's already in datetime-local format (YYYY-MM-DDTHH:MM), return as is
+    if (dateString.includes('T') && dateString.length >= 16) {
+      return dateString.slice(0, 16);
+    }
+    
+    // If it's just a date (YYYY-MM-DD), add default time (10:00 AM)
+    if (dateString.length === 10) {
+      return `${dateString}T10:00`;
+    }
+    
+    // Try parsing as ISO string and format
+    try {
+      const date = new Date(dateString);
+      return date.toISOString().slice(0, 16);
+    } catch {
+      return getDefaultDeliveryDate();
+    }
+  };
+
   // Case update
   const [selectedCase, setSelectedCase] = useState(null);
   const [showCaseDialog, setShowCaseDialog] = useState(false);
@@ -529,7 +552,7 @@ function AdminDashboard() {
       customer_id: order.customer_id,
       customer_name: order.customer_name,
       customer_email: order.customer_email,
-      delivery_date: order.delivery_date.slice(0, 16),
+      delivery_date: formatDateForInput(order.delivery_date),
       pickup_address: order.pickup_address,
       delivery_address: order.delivery_address,
       special_instructions: order.special_instructions || "",
