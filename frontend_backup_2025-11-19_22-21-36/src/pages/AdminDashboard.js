@@ -317,6 +317,14 @@ function AdminDashboard() {
   ]);
   const [filteredSkus, setFilteredSkus] = useState([]);
 
+  // Helper function to get default delivery date (tomorrow at 10 AM)
+  const getDefaultDeliveryDate = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(10, 0, 0, 0);
+    return tomorrow.toISOString().slice(0, 16);
+  };
+
   // Case update
   const [selectedCase, setSelectedCase] = useState(null);
   const [showCaseDialog, setShowCaseDialog] = useState(false);
@@ -1620,6 +1628,11 @@ function AdminDashboard() {
                     onClick={() => {
                       setIsEditMode(false);
                       setEditingOrder(null);
+                      // Set default delivery date when creating new order
+                      setOrderForm(prev => ({
+                        ...prev,
+                        delivery_date: getDefaultDeliveryDate()
+                      }));
                     }}
                     data-testid="create-order-btn"
                   >
