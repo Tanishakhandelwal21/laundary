@@ -2557,21 +2557,6 @@ async def propose_order_modification(
             )
         
         return {"message": "Modification request sent to owner for approval", "order_id": order_id}
-        
-        # Send SMS notification
-        if customer.get('phone'):
-            send_sms(
-                phone_number=customer['phone'],
-                message_body=f"""Infinite Laundry Solutions
-
-Approval Needed: Changes have been proposed for your recurring order {order['order_number']}.
-
-Please log in to your dashboard to review and approve/reject the changes.
-
-The current order will continue as scheduled until you approve."""
-            )
-    
-    return {"message": "Modification proposed successfully. Customer approval required."}
 
 
 @api_router.put("/orders/{order_id}/approve-modification")
