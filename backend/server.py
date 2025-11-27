@@ -3293,17 +3293,29 @@ async def generate_recurring_orders_job():
         current_date = datetime.now(timezone.utc).date()
         
         # Find recurring orders that need to be generated
+        # ONLY include orders that are NOT cancelled/deleted and have valid status
         recurring_orders = await db.orders.find({
             "is_recurring": True,
-            "next_occurrence_date": current_date.isoformat()
+            "next_occurrence_date": current_date.isoformat(),
+            "status": {"$nin": ["cancelled", "deleted"]},  # Exclude cancelled/deleted orders
+            "total_amount": {"$gt": 0}  # Must have valid pricing
         }).to_list(length=None)
         
+        generated_count = 0
+        failed_count = 0
+        
         for template_order in recurring_orders:
-            # Create new order based on template
-            await create_order_from_template(template_order)
+            # Create new order based on template with validation
+            result = await create_order_from_template(template_order)
+            if result:
+                generated_count += 1
+            else:
+                failed_count += 1
             
-        if recurring_orders:
-            logging.info(f"Generated {len(recurring_orders)} recurring orders")
+        if generated_count > 0:
+            logging.info(f"Generated {generated_count} recurring orders successfully")
+        if failed_count > 0:
+            logging.warning(f"Failed to generate {failed_count} recurring orders (validation failed)")
     except Exception as e:
         logging.error(f"Error in generate_recurring_orders_job: {str(e)}")
 
@@ -3371,23 +3383,89 @@ async def send_notification(user_id: str, email: str, title: str, message: str, 
         logging.error(f"Error in send_notification: {str(e)}")
 
 async def create_order_from_template(template_order):
-    """Create a new order from a recurring order template"""
+    """Create a new order from a recurring order template with comprehensive validation"""
     try:
-        # Create new order
+        # VALIDATION 1: Check if template order has valid pricing
+        if not template_order.get('total_amount') or template_order['total_amount'] <= 0:
+            logging.error(f"Refusing to create recurring order from template {template_order.get('order_number')} - Invalid pricing: ${template_order.get('total_amount', 0)}")
+            return None
+        
+        # VALIDATION 2: Check if template order has items
+        if not template_order.get('items') or len(template_order['items']) == 0:
+            logging.error(f"Refusing to create recurring order from template {template_order.get('order_number')} - No items")
+            return None
+        
+        # VALIDATION 3: Check if template is cancelled or deleted
+        if template_order.get('status') in ['cancelled', 'deleted']:
+            logging.warning(f"Skipping recurring order generation from {template_order.get('order_number')} - Template is {template_order.get('status')}")
+            return None
+        
+        # VALIDATION 4: Check if customer still exists
+        customer = await db.users.find_one({"id": template_order['customer_id']})
+        if not customer:
+            logging.error(f"Refusing to create recurring order from template {template_order.get('order_number')} - Customer not found")
+            return None
+        
+        # VALIDATION 5: Calculate next delivery date (must be in the future)
+        recurrence = template_order.get('recurrence_pattern', {})
+        frequency_type = recurrence.get('frequency_type')
+        frequency_value = recurrence.get('frequency_value', 1)
+        
+        if not frequency_type:
+            logging.error(f"Refusing to create recurring order from template {template_order.get('order_number')} - No frequency type")
+            return None
+        
+        # Calculate next occurrence date
+        current_next_date = datetime.fromisoformat(template_order['next_occurrence_date'])
+        if frequency_type == 'daily':
+            next_delivery_date = current_next_date + timedelta(days=frequency_value)
+        elif frequency_type == 'weekly':
+            next_delivery_date = current_next_date + timedelta(weeks=frequency_value)
+        elif frequency_type == 'monthly':
+            next_delivery_date = current_next_date + timedelta(days=30 * frequency_value)
+        else:
+            logging.error(f"Refusing to create recurring order - Invalid frequency type: {frequency_type}")
+            return None
+        
+        # Calculate pickup date (2 days before delivery)
+        next_pickup_date = next_delivery_date - timedelta(days=2)
+        
+        # VALIDATION 6: Ensure delivery date is in the future
+        if next_delivery_date.date() <= datetime.now(timezone.utc).date():
+            logging.error(f"Refusing to create recurring order from template {template_order.get('order_number')} - Delivery date is in the past: {next_delivery_date.date()}")
+            # Update next occurrence to skip this date
+            await db.orders.update_one(
+                {"id": template_order['id']},
+                {"$set": {"next_occurrence_date": next_delivery_date.date().isoformat()}}
+            )
+            return None
+        
+        # Generate unique order number
+        order_number = await get_next_order_number()
+        
+        # Calculate pricing with GST
+        total_amount = template_order['total_amount']
+        gst_amount = total_amount * 0.10
+        total_with_gst = total_amount + gst_amount
+        
+        # Create new order with proper validation
         new_order = Order(
             customer_id=template_order['customer_id'],
             customer_name=template_order['customer_name'],
             customer_email=template_order['customer_email'],
             items=template_order['items'],
-            pickup_date=template_order['pickup_date'],
-            delivery_date=template_order['delivery_date'],
+            pickup_date=next_pickup_date.date().isoformat(),
+            delivery_date=next_delivery_date.date().isoformat(),
             pickup_address=template_order['pickup_address'],
             delivery_address=template_order['delivery_address'],
             special_instructions=template_order.get('special_instructions'),
-            order_number=f"ORD-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}",
-            total_amount=template_order['total_amount'],
+            order_number=order_number,
+            total_amount=total_amount,
+            gst_amount=gst_amount,
+            total_with_gst=total_with_gst,
             created_by='system_recurring',
-            is_recurring=False  # The generated order is not recurring itself
+            is_recurring=False,  # The generated order is not recurring itself
+            parent_recurring_id=template_order['id']  # Link to parent template
         )
         
         doc = new_order.model_dump()
@@ -3397,35 +3475,31 @@ async def create_order_from_template(template_order):
         await db.orders.insert_one(doc)
         
         # Update next occurrence date in template
-        recurrence = template_order.get('recurrence_pattern', {})
-        frequency_type = recurrence.get('frequency_type')
-        frequency_value = recurrence.get('frequency_value', 1)
-        
-        next_date = datetime.fromisoformat(template_order['next_occurrence_date'])
-        if frequency_type == 'daily':
-            next_date = next_date + timedelta(days=frequency_value)
-        elif frequency_type == 'weekly':
-            next_date = next_date + timedelta(weeks=frequency_value)
-        elif frequency_type == 'monthly':
-            next_date = next_date + timedelta(days=30 * frequency_value)
-        
         await db.orders.update_one(
             {"id": template_order['id']},
-            {"$set": {"next_occurrence_date": next_date.date().isoformat()}}
+            {"$set": {
+                "next_occurrence_date": next_delivery_date.date().isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
         )
         
+        logging.info(f"✅ Successfully created recurring order {order_number} from template {template_order.get('order_number')} - Delivery: {next_delivery_date.date()}, Total: ${total_with_gst:.2f}")
+        
         # Send notification to customer
-        customer = await db.users.find_one({"id": template_order['customer_id']})
         if customer:
             await send_notification(
                 user_id=customer['id'],
                 email=customer['email'],
                 title="Recurring Order Generated",
-                message=f"Your recurring order #{new_order.order_number} has been automatically created",
+                message=f"Your recurring order #{order_number} has been automatically created for delivery on {next_delivery_date.strftime('%B %d, %Y')}. Total: ${total_with_gst:.2f}",
                 notif_type="order_created"
             )
+        
+        return new_order
+        
     except Exception as e:
-        logging.error(f"Error in create_order_from_template: {str(e)}")
+        logging.error(f"Error in create_order_from_template for {template_order.get('order_number')}: {str(e)}")
+        return None
 
 # Application Lifecycle Events
 @app.on_event("startup")
