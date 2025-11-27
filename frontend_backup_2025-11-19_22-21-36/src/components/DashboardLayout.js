@@ -308,6 +308,23 @@ function DashboardLayout({ children }) {
         {/* Main Content Area */}
         <main className={`flex-1 p-4 sm:p-6 ${sidebarOpen ? 'md:ml-48 lg:ml-56 xl:ml-64' : ''} transition-all`}>
           {children}
+          
+          {/* Footer */}
+          <footer className="mt-8 pt-6 pb-4 border-t border-gray-200">
+            <div className="text-center">
+              <p className="text-sm text-gray-600">
+                Powered by{' '}
+                <a 
+                  href="https://aclixgo.aclixinnovations.com" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-teal-600 hover:text-teal-700 font-semibold hover:underline"
+                >
+                  Aclix Innovations
+                </a>
+              </p>
+            </div>
+          </footer>
         </main>
       </div>
     </div>
