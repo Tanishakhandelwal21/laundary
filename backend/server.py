@@ -2513,7 +2513,19 @@ async def propose_order_modification(
             raise HTTPException(status_code=403, detail="Not authorized")
         
         # Check if modification is allowed (before 11:59 PM on day before delivery)
-        delivery_date = datetime.fromisoformat(order['delivery_date'].replace('Z', '+00:00'))
+        delivery_date_str = order['delivery_date'].replace('Z', '+00:00')
+        try:
+            delivery_date = datetime.fromisoformat(delivery_date_str)
+        except:
+            # If it's just a date string (YYYY-MM-DD), parse as midnight UTC
+            delivery_date = datetime.fromisoformat(delivery_date_str)
+            if delivery_date.tzinfo is None:
+                delivery_date = delivery_date.replace(tzinfo=timezone.utc)
+        
+        # Ensure timezone-aware for comparison
+        if delivery_date.tzinfo is None:
+            delivery_date = delivery_date.replace(tzinfo=timezone.utc)
+        
         cutoff_time = delivery_date.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
         current_time = datetime.now(timezone.utc)
         
