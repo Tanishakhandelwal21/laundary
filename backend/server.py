@@ -3285,8 +3285,23 @@ async def lock_orders_job():
         logging.error(f"Error in lock_orders_job: {str(e)}")
 
 async def generate_recurring_orders_job():
-    """Generate recurring orders based on schedule"""
+    """Generate recurring orders based on schedule - DISABLED
+    
+    This job has been disabled because the roll_forward_recurring_order function
+    already handles updating recurring orders when they are marked as delivered.
+    Having both systems (roll-forward AND this job) causes duplicate orders.
+    
+    The roll-forward approach is preferred because:
+    1. It updates the existing recurring order with new dates (no duplicate entries)
+    2. It preserves the order history in deliveries_history field
+    3. It maintains a single order entry per recurring schedule
+    """
     try:
+        # DISABLED - roll_forward_recurring_order handles this
+        logging.info("generate_recurring_orders_job is disabled - recurring orders are handled by roll_forward_recurring_order when marked delivered")
+        return
+        
+        # Original code kept for reference but not executed
         current_date = datetime.now(timezone.utc).date()
         
         # Find recurring orders that need to be generated
